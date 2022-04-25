@@ -1,0 +1,76 @@
+! compilation nvfortran -cudalib=cufft cufft1d_test.cuf
+
+
+subroutine random_stduniform(u) ! генерируем равномерно распределенное число
+   implicit none
+   real,intent(out) :: u
+   real :: r
+   call random_number(r)
+   u = 1 - r
+end subroutine random_stduniform
+
+subroutine random_stdnormal(g) ! Box-Miller transofmation для получения из равномерно распределенного числа стандартное нормальное
+    implicit none
+    real,intent(out) :: g
+    real,parameter :: pi=3.14159265
+    real :: u1,u2
+    call random_stduniform(u1)
+    call random_stduniform(u2)
+    g = sqrt(-2*log(u1))*cos(2*pi*u2)
+end subroutine random_stdnormal
+
+program cufft1dTest
+    use cudafor
+    use cufft
+    use stdlib_sorting, only: sort
+    implicit none
+    integer i
+    real w
+
+    integer, parameter :: n = 512
+    real(8), parameter :: eps = 1d-14 ! accuracy
+
+    ! Managed variables may be used in both host and device code
+    real(8), managed :: a(n), b(n)
+
+    real(8) x
+    integer plan, ierr
+    logical passing
+
+    do i = 1,n
+           call random_stdnormal(w)
+           a(i) = w
+    end do
+
+    call sort(a)
+
+    do i = 1,n
+       Print *, a(i)
+    end do
+
+
+    ierr = cufftPlan1D(plan,n,CUFFT_Z2Z, 1)
+    ierr = ierr + cufftExecZ2Z(plan,a,b,CUFFT_FORWARD)
+    ierr = ierr + cufftExecZ2Z(plan,b,b,CUFFT_INVERSE)
+    ierr = ierr + cudaDeviceSynchronize()
+
+    x = maxval(abs(a-b/(n)))
+    write(*,*) 'Max error Z2Z: ', x
+
+    passing = x .le. eps
+
+    ierr = ierr + cufftDestroy(plan)
+    print *,ierr
+
+    passing = passing .and. (ierr .eq. 0)
+    if (passing) then
+        print *,"Test PASSED"
+    else
+        print *,"Test FAILED"
+    endif
+
+    !do i = 1,n
+    !Print *, b(i)
+    !end do
+
+end program cufft1dTest
